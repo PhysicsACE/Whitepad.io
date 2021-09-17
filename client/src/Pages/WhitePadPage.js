@@ -271,7 +271,8 @@ function WhitePadPage() {
     const [room, setRoom] = useState('')
     const [canvas, setCanvas] = useState(null)
     const [active, setActive] = useState(null)
-    const [initCanvas, setInitCanvas] = useState([null, null])
+    const [initCanvas, setInitCanvas] = useState(false)
+    const [initObjects, setInitObjects] = useState(null)
     const history = useHistory()
     const types = ['rect', 'triangle', 'textbox', 'ellispe', 'polygon', 'path']
     var selected
@@ -315,6 +316,7 @@ function WhitePadPage() {
         setRoom(room)
         setName(name)
         socket.emit('newRoomJoin', {room, name})
+        var currName = name
 
         // socket.on('usersUpdate', ({users}) => {
         //     console.log(users)
@@ -322,15 +324,13 @@ function WhitePadPage() {
         // })
 
         
-        socket.on('usersUpdate', ({users, jsonCanvas, name}) => {
+        socket.on('usersUpdate', ({users, initObjs, name}) => {
             console.log(users)
             console.log(name)
-            console.log(jsonCanvas)
+            console.log(initObjs)
             console.log(thisname)
-            if (thisname === name && jsonCanvas !== null) {
-                var temp = canvas
-                temp[1] = jsonCanvas
-                setInitCanvas(temp)
+            if (currName === name && initObjs !== null) {
+                setInitObjects(initObjs)
             }
             setUsers(users)
         })
@@ -338,11 +338,106 @@ function WhitePadPage() {
     }, [])
 
     useEffect(() => {
-        if (initCanvas[0] && initCanvas[1]) {
-            canvas.loadFronJSON(initCanvas[1], canvas.renderAll())
+        console.log(initCanvas)
+        if (initCanvas && initObjects !== null) {
+            console.log(initCanvas)
+            canvas.selection = false
+            var groupDic = {}
+            for (var obj in initObjects) {
+                console.log(obj)
+                var info = initObjects[obj]
+                var pastStack = info[0]
+                var curr = pastStack.data.at(-1)
+                console.log(curr)
+                let object
+                
+                if (curr.type === 'rect') {
+                    object = new fabric.Rect()
+                } else if (curr.type === 'path') {
+                    object = new fabric.Path(curr.path, {fill: curr.fill, stroke: curr.stroke, strokeWidth: curr.strokeWidth})
+                    
+                } else if (curr.type === 'textbox') {
+                    object = new fabric.Textbox('')
+                }  else if (curr.type === 'triangle') {
+                    object = new fabric.Triangle()
+                } else if (curr.type === 'ellipse') {
+                    object = new fabric.Ellipse()
+                } else if (curr.type === 'polygon') {
+                    object = new fabric.Polygon()
+                } else if (curr.type === 'group') {
+                    groupDic[obj] = curr
+                    continue
+                } else if (curr.type === 'lineArrow') {
+                    object = new fabric.LineArrow()
+                }
+
+                object.set({id: obj})
+                object.set(curr)
+                addToDic(object)
+                canvas.add(object)
+                console.log(object.id)
+            }
+
+            for (var obj in groupDic) {
+                var g = groupDic[obj]
+                var left = g.left
+                var top = g.top
+                var objectsInGroup = g.objects
+                var objsInGroup = []
+                objectsInGroup.forEach((obj) => {
+                    var curr = groupGet(obj.id)
+                    objsInGroup.push(curr)
+                    groupRemove(obj.id)
+                })
+
+                console.log(objsInGroup)
+                var group = new fabric.Group(objsInGroup, {left: left, top: top, id: obj})
+                addToDic(group)
+                canvas.add(group)
+
+                // var activeObj = canvas.getActiveObject();
+                // var left = activeObj.left
+                // var top = activeObj.top
+                // var objIds = []
+                // var objectsInGroup = activeObj._objects
+                // objectsInGroup.forEach((obj) => {
+                //     objIds.push(obj.id)
+                //     canvas.remove(obj)
+                // })
+
+                // var group = new fabric.Group(objectsInGroup, {left: left, top: top, id: uuid()})
+                // console.log(group.id)
+                // canvas.add(group)
+                // canvas.renderAll()
+                // addToState(group)
+                // emitGroup({objectsInGroup: objIds, left: left, top: top, id: group.id, oriName: thisname})
+            }
+
+            canvas.selection = true
+            canvas.renderAll()
+            setInitObjects(null)
+
         }
-    }, [initCanvas])
-    
+    }, [initCanvas, initObjects])
+
+    const groupRemove = (id) => {
+        canvas.forEachObject(function(obj) {
+            if (obj.id === id) {
+                canvas.remove(obj)
+            }
+        })
+    }
+
+    const groupGet = (id) => {
+        var curr = null
+        canvas.forEachObject(function(obj) {
+            if (obj.id === id) {
+                curr = obj
+            }
+        })
+
+        return curr
+    }
 
     useEffect(() => {
         if (canvas) {
@@ -354,9 +449,7 @@ function WhitePadPage() {
                 e.preventDefault()
             }
 
-            var temp = canvas
-            temp[0] = true
-            setInitCanvas(temp)
+            setInitCanvas(true)
 
 
             // if (initCanvas.current !== null) {
@@ -767,7 +860,7 @@ function WhitePadPage() {
 
     const addToDic = (obj) => {
         const pastState = new objStack()
-        pastState.push(obj.toObject())
+        pastState.push(obj.toObject(['id']))
         const futureState = new objStack()
         objectDic[obj.id] = [pastState, futureState]
     }
@@ -775,15 +868,19 @@ function WhitePadPage() {
     const modifyInDic = (obj) => {
         const info = objectDic[obj.id]
         const past = info[0]
-        past.push(obj.toObject())
+        past.push(obj.toObject(['id']))
         objectDic[obj.id] = [past, info[1]]
+    }
+
+    const removeInDic = (id) => {
+        delete objectDic[id]
     }
 
 
     const addToState = (obj) => {
         wpState.push({action: 'add', object: obj})
         const pastState = new objStack()
-        pastState.push(obj.toObject())
+        pastState.push(obj.toObject(['id']))
         const futureState = new objStack()
         objectDic[obj.id] = [pastState, futureState]
     }
@@ -792,7 +889,7 @@ function WhitePadPage() {
         wpState.push({action: 'modify', object: obj})
         const info = objectDic[obj.id]
         const past = info[0]
-        past.push(obj.toObject())
+        past.push(obj.toObject(['id']))
         objectDic[obj.id] = [past, info[1]]
     }
 
@@ -848,7 +945,11 @@ function WhitePadPage() {
                 if (object.id === obj.id) {
                     object.set(obj)
                     object.setCoords()
-                    emitModify(object)
+                    const modifiedObj = {
+                        obj: object,
+                        id: object.id,
+                      }
+                    emitModify(modifiedObj)
                     canvas.renderAll()
                 }
             })
@@ -883,7 +984,11 @@ function WhitePadPage() {
                 canvas.getObjects().forEach(object => {
                     if (object.id === obj.id) {
                         canvas.remove(object)
-                        emitDelete(object)
+                        const modifiedObj = {
+                            obj: object,
+                            id: object.id,
+                          }
+                        emitDelete(modifiedObj)
                     }
                 })
             }
@@ -1022,6 +1127,11 @@ function WhitePadPage() {
                 if (object.id === obj.id) {
                     object.set(obj)
                     object.setCoords()
+                    const modifiedObj = {
+                        obj: object,
+                        id: object.id,
+                      }
+                    emitModify(modifiedObj)
                     canvas.renderAll()
                 }
             })
@@ -1565,46 +1675,48 @@ function WhitePadPage() {
 
     const emitAdd = (data) => {
         var jsonCanvas = JSON.stringify(canvas)
-        socket.emit('object-added', {data, room, jsonCanvas})
+        socket.emit('object-added', {data, room, objectDic})
     }
 
     const emitModify = (data) => {
         var jsonCanvas = JSON.stringify(canvas)
-        socket.emit('object-modified', {data, room, jsonCanvas})
+        socket.emit('object-modified', {data, room, objectDic})
     }
 
     const emitGroup = (data) => {
         var jsonCanvas = JSON.stringify(canvas)
-        socket.emit('group-added', {data, room, jsonCanvas})
+        socket.emit('group-added', {data, room, objectDic})
     }
 
     const emitUngroup = (data) => {
         var jsonCanvas = JSON.stringify(canvas)
-        socket.emit('ungroup', {data, room, jsonCanvas})
+        socket.emit('ungroup', {data, room, objectDic})
     }
 
     const emitConnector = (data) => {
         var jsonCanvas = JSON.stringify(canvas)
-        socket.emit('add-connector', {data, room, jsonCanvas})
+        socket.emit('add-connector', {data, room, objectDic})
     }
 
     const emitRemoveConnector = (data) => {
         var jsonCanvas = JSON.stringify(canvas)
-        socket.emit('remove-connector', {data, room, jsonCanvas})
+        socket.emit('remove-connector', {data, room, objectDic})
     }
 
     const emitPositionChange = (option, data) => {
         var jsonCanvas = JSON.stringify(canvas)
         if (option === 'back') {
-            socket.emit('object-pushBack', {data, room, jsonCanvas})
+            modifyInState(data.obj)
+            socket.emit('object-pushBack', {data, room, objectDic})
         } else {
-            socket.emit('object-pushFront', {data, room, jsonCanvas})
+            modifyInState(data.obj)
+            socket.emit('object-pushFront', {data, room, objectDic})
         }
     }
 
     const emitDelete = (data) => {
         var jsonCanvas = JSON.stringify(canvas)
-        socket.emit('object-delete', ({data, room, jsonCanvas}))
+        socket.emit('object-delete', ({data, room, objectDic}))
     }
 
     const disconnect = () => {
